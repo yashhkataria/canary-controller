@@ -49,8 +49,7 @@ If your repo name isn't `canary-controller`, update the module path in `CLAUDE.m
 Open Claude Code in the repo root and paste:
 
 ```text
-Read CLAUDE.md and docs/design.md. The repo layout already exists, along with go.mod, CLAUDE.md and the docs. Add a
-`build-demo` Makefile target as part of this work, then build cmd/demo-app:
+Read CLAUDE.md and docs/design.md. The repo layout already exists, along with go.mod, CLAUDE.md and the docs. Add a `build-demo` Makefile target as part of this work, then build cmd/demo-app:
 an HTTP server on :8080 with GET / (JSON with version and track),
 GET /healthz and GET /metrics.
 - Read VERSION, TRACK, ERROR_RATE (0 to 1) and EXTRA_LATENCY_MS from env

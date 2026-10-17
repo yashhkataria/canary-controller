@@ -187,7 +187,9 @@ Fields left out of `analysis` take the starting values above. Use Go's standard 
 | --- | --- | --- |
 | `VERSION` | Reported in responses | build arg |
 | `TRACK` | `stable` or `canary`; metric label | set by the Deployment |
-| `ERROR_RATE` | Fraction of requests answered with 500 (0 to 1) | build arg, 0 |
-| `EXTRA_LATENCY_MS` | Delay added to every request | build arg, 0 |
+| `ERROR_RATE` | Fraction of `GET /` requests answered with 500 (0 to 1) | build arg, 0 |
+| `EXTRA_LATENCY_MS` | Delay added to every `GET /` request | build arg, 0 |
+
+Injection and the `http_*` metrics cover `GET /` only. `/healthz` and `/metrics` stay fast and healthy, so a bad image still becomes ready and probe traffic does not dilute the measured error rate.
 
 Images: `demo:v1`, `demo:v2`, `demo:v2-bad` (20% errors), `demo:v2-slow` (+800 ms). The controller only swaps images; the bad behaviour is baked into the image.

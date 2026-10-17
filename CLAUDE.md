@@ -15,6 +15,7 @@ Module path: github.com/yashhkataria/canary-controller
 ## Repo layout
 - cmd/controller, cmd/demo-app: main packages only; keep them thin
 - internal/api: HTTP handlers
+- internal/demoapp: demo app handlers, config and metrics
 - internal/rollout: state machine and reconcile loop
 - internal/analysis: Prometheus queries and decide()
 - internal/k8s: client-go wrappers (scale, set image)
@@ -37,9 +38,11 @@ Empty folders hold a .gitkeep; delete it once a folder has real files.
 - Never create cloud resources (GCP) without asking first.
 
 ## Commands
-make help | make tools
-Later phases add: make build | make test | make lint | make kind-up | make deploy | make load
+make help | make tools | make test | make build-demo
+Later phases add: make build | make lint | make kind-up | make deploy | make load
 
 ## Status
 Phase 0 done: repo layout, go.mod, CLAUDE.md, docs, tool check (make tools).
-Next: Phase 1, demo app.
+Phase 1 done: demo app (internal/demoapp, cmd/demo-app), Dockerfile,
+make test, make build-demo.
+Next: Phase 2, local cluster with Prometheus and steady load.

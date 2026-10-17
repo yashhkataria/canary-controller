@@ -22,8 +22,8 @@ Module path: github.com/yashhkataria/canary-controller
 - internal/lock: Redis locks
 - internal/metrics: the controller's own Prometheus metrics
 - deploy/: kind config, Kubernetes manifests, monitoring values, GKE overlay
-- loadtest/: k6 scripts; scripts/: experiment runners
-- docs/: design.md, notes.md, results.md, img/
+- loadtest/: k6 scripts; scripts/: experiment runners and tool checks
+- docs/: design.md, setup.md, notes.md, results.md, img/
 Empty folders hold a .gitkeep; delete it once a folder has real files.
 
 ## Conventions
@@ -34,11 +34,12 @@ Empty folders hold a .gitkeep; delete it once a folder has real files.
 - No new dependencies without asking.
 - Config via env vars, documented in README.
 - After each change, explain what you did and why in a few lines.
+- Never create cloud resources (GCP) without asking first.
 
 ## Commands
-make build | make test | make lint | make kind-up | make deploy | make load
-(Targets are added phase by phase; the Makefile is empty at first.)
+make help | make tools
+Later phases add: make build | make test | make lint | make kind-up | make deploy | make load
 
 ## Status
-Phase 0 done: repo layout, go.mod, CLAUDE.md, docs/design.md.
+Phase 0 done: repo layout, go.mod, CLAUDE.md, docs, tool check (make tools).
 Next: Phase 1, demo app.

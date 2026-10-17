@@ -1,6 +1,17 @@
+# Build output
 bin/
+dist/
+
+# Go test and coverage output
+*.test
 *.out
 coverage*
+
+# Local config and secrets
 .env
 *.kubeconfig
+
+# Editors and OS
+.idea/
+.vscode/
 .DS_Store

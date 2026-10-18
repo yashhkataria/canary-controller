@@ -14,6 +14,6 @@ ENV VERSION=${VERSION} \
     ERROR_RATE=${ERROR_RATE} \
     EXTRA_LATENCY_MS=${EXTRA_LATENCY_MS}
 COPY --from=build /out/demo-app /demo-app
-USER nonroot:nonroot
+USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/demo-app"]

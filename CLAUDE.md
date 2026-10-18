@@ -39,10 +39,15 @@ Empty folders hold a .gitkeep; delete it once a folder has real files.
 
 ## Commands
 make help | make tools | make test | make build-demo
-Later phases add: make build | make lint | make kind-up | make deploy | make load
+make kind-up | make kind-down | make deploy | make load | make load-stop
+make prometheus | make grafana | make alertmanager
+Later phases add: make build | make lint
 
 ## Status
 Phase 0 done: repo layout, go.mod, CLAUDE.md, docs, tool check (make tools).
 Phase 1 done: demo app (internal/demoapp, cmd/demo-app), Dockerfile,
 make test, make build-demo.
-Next: Phase 2, local cluster with Prometheus and steady load.
+Phase 2 done: kind cluster, kube-prometheus-stack (Alertmanager on, demo
+alert rules), demo Deployments + PodMonitor, MongoDB and Redis in
+canary-system, k6 Job (make kind-up | deploy | load).
+Next: Phase 3, controller API and MongoDB store.

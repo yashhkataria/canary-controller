@@ -1,0 +1,50 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: demo
+  labels:
+    app: demo
+spec:
+  groups:
+    - name: demo
+      rules:
+        - alert: DemoHighErrorRate
+          expr: |
+            sum by (track) (rate(http_requests_total{job="default/demo",code=~"5.."}[1m]))
+              / sum by (track) (rate(http_requests_total{job="default/demo"}[1m]))
+              > 0.05
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "demo {{ $labels.track }}: {{ $value | humanizePercentage }} of requests fail"
+            description: "More than 5% of GET / requests on the {{ $labels.track }} track returned 5xx for 1 minute."
+        - alert: DemoHighLatency
+          expr: |
+            histogram_quantile(0.99,
+              sum by (track, le) (rate(http_request_duration_seconds_bucket{job="default/demo"}[1m])))
+              > 0.5
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "demo {{ $labels.track }}: p99 latency {{ $value | humanizeDuration }}"
+            description: "p99 latency of GET / on the {{ $labels.track }} track has been above 500 ms for 1 minute."
+        - alert: DemoStableDegraded
+          expr: |
+            kube_deployment_status_replicas_available{namespace="default",deployment="demo-stable"}
+              < kube_deployment_spec_replicas{namespace="default",deployment="demo-stable"}
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "demo-stable has {{ $value }} available pods, fewer than desired"
+            description: "demo-stable has had fewer available pods than desired for 2 minutes."
+        - alert: DemoTargetDown
+          expr: up{job="default/demo"} == 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Prometheus cannot scrape demo pod {{ $labels.pod }}"
+            description: "The /metrics endpoint of {{ $labels.pod }} has been unreachable for 1 minute."

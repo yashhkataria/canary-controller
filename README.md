@@ -2,7 +2,7 @@
 
 A canary deployment controller for Kubernetes, written in Go. It shifts traffic to a new version in stages, checks Prometheus error rate and p99 latency after each stage, and promotes or rolls back automatically.
 
-> **Status:** work in progress. Phases 0–1 (project setup, demo app) are done; see the roadmap below.
+> **Status:** work in progress. Phases 0–2 (project setup, demo app, local cluster) are done; see the roadmap below.
 
 ## How it works
 
@@ -20,7 +20,7 @@ Go · Kubernetes (client-go) · Docker · MongoDB · Redis · Prometheus · Graf
 
 - [x] Phase 0: project setup
 - [x] Phase 1: demo app with error and latency injection
-- [ ] Phase 2: local cluster with Prometheus and steady load
+- [x] Phase 2: local cluster with Prometheus and steady load
 - [ ] Phase 3: controller API and MongoDB store
 - [ ] Phase 4: rollout engine
 - [ ] Phase 5: automated analysis and rollback
@@ -36,9 +36,20 @@ See [docs/setup.md](docs/setup.md). Quickstart commands will land here as the ph
 
 ```bash
 make test        # unit tests
-make build-demo  # builds demo:v1, demo:v2, demo:v2-bad, demo:v2-slow
-docker run --rm -p 8080:8080 -e TRACK=canary demo:v2-bad
+make kind-up     # kind cluster "canary" (1 control plane, 2 workers) with the demo images loaded
+make deploy      # kube-prometheus-stack, MongoDB, Redis, demo-stable (10 pods) and demo-canary (0 pods)
+make load        # steady k6 load on the demo Service; make load RATE=100 DURATION=30m
+make prometheus  # http://localhost:9090 (also: make grafana, make alertmanager)
+make kind-down   # delete the cluster
 ```
+
+Grafana's login is `admin`; read the password with:
+
+```bash
+kubectl --context kind-canary -n monitoring get secret monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d
+```
+
+Alerts for the demo app (error rate, p99 latency, stable capacity, scrape failures) are in `deploy/k8s/demo/alerts.yaml` and show up in Prometheus and Alertmanager. Alertmanager has no notification receiver yet, so alerts are visible in its UI but not sent anywhere.
 
 ## Configuration
 
@@ -54,6 +65,15 @@ Listens on `:8080` and serves `GET /` (JSON with version and track), `GET /healt
 | `EXTRA_LATENCY_MS` | Delay in ms added to every `GET /` request | image build arg, else `0` |
 
 Metrics: `http_requests_total{track, code}` and `http_request_duration_seconds{track}` (histogram), counting `GET /` only.
+
+### Local environment (`make` variables)
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `RATE` | Requests per second `make load` sends to the demo Service | `50` |
+| `DURATION` | How long `make load` runs | `10m` |
+| `CLUSTER` | kind cluster name | `canary` |
+| `KUBE_CONTEXT` | kubectl/Helm context every target uses | `kind-$(CLUSTER)` |
 
 ## License
 

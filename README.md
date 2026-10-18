@@ -2,7 +2,7 @@
 
 A canary deployment controller for Kubernetes, written in Go. It shifts traffic to a new version in stages, checks Prometheus error rate and p99 latency after each stage, and promotes or rolls back automatically.
 
-> **Status:** work in progress. Phases 0–2 (project setup, demo app, local cluster) are done; see the roadmap below.
+> **Status:** work in progress. Phases 0–3 (project setup, demo app, local cluster, controller API and store) are done; see the roadmap below.
 
 ## How it works
 
@@ -21,7 +21,7 @@ Go · Kubernetes (client-go) · Docker · MongoDB · Redis · Prometheus · Graf
 - [x] Phase 0: project setup
 - [x] Phase 1: demo app with error and latency injection
 - [x] Phase 2: local cluster with Prometheus and steady load
-- [ ] Phase 3: controller API and MongoDB store
+- [x] Phase 3: controller API and MongoDB store
 - [ ] Phase 4: rollout engine
 - [ ] Phase 5: automated analysis and rollback
 - [ ] Phase 6: high availability with Redis locks
@@ -35,11 +35,12 @@ Go · Kubernetes (client-go) · Docker · MongoDB · Redis · Prometheus · Graf
 See [docs/setup.md](docs/setup.md). Quickstart commands will land here as the phases are built.
 
 ```bash
-make test        # unit tests
-make kind-up     # kind cluster "canary" (1 control plane, 2 workers) with the demo images loaded
-make deploy      # kube-prometheus-stack, MongoDB, Redis, demo-stable (10 pods) and demo-canary (0 pods)
+make test        # all tests; the MongoDB integration tests need Docker (make test-unit skips them)
+make kind-up     # kind cluster "canary" (1 control plane, 2 workers) with the demo and controller images loaded
+make deploy      # kube-prometheus-stack, MongoDB, Redis, demo-stable (10 pods), demo-canary (0 pods), controller
 make load        # steady k6 load on the demo Service; make load RATE=100 DURATION=30m
 make prometheus  # http://localhost:9090 (also: make grafana, make alertmanager)
+make controller  # controller API on http://localhost:8081
 make kind-down   # delete the cluster
 ```
 
@@ -51,7 +52,39 @@ kubectl --context kind-canary -n monitoring get secret monitoring-grafana -o jso
 
 Alerts for the demo app (error rate, p99 latency, stable capacity, scrape failures) are in `deploy/k8s/demo/alerts.yaml` and show up in Prometheus and Alertmanager. Alertmanager has no notification receiver yet, so alerts are visible in its UI but not sent anywhere.
 
+### Using the controller API
+
+With `make controller` running in another terminal:
+
+```bash
+curl -s -X POST localhost:8081/v1/create-rollout -H 'Content-Type: application/json' \
+  -d '{"namespace":"default","app":"demo","image":"demo:v2-bad","steps":[10,50,100]}'
+```
+
+```bash
+curl -s 'localhost:8081/v1/rollouts?app=demo'
+```
+
+```bash
+curl -s localhost:8081/v1/rollouts/<id>/events
+```
+
+In Phase 3 a new rollout is only stored as `Pending`; nothing changes in the cluster yet, and `abort`/`promote` return 501.
+
 ## Configuration
+
+### Controller (`cmd/controller`)
+
+| Env var | Meaning | Default |
+| --- | --- | --- |
+| `PORT` | HTTP port | `8080` |
+| `MONGO_URI` | MongoDB connection string | `mongodb://mongodb.canary-system:27017` |
+| `MONGO_DATABASE` | Database for `rollouts` and `events` | `canary` |
+| `PROMETHEUS_URL` | Prometheus base URL (used from Phase 5) | `http://monitoring-kube-prometheus-prometheus.monitoring:9090` |
+| `REDIS_ADDR` | Redis `host:port` (used from Phase 6) | `redis.canary-system:6379` |
+| `LOG_LEVEL` | `debug`, `info`, `warn` or `error` | `info` |
+
+Invalid values stop the controller at startup. Probe requests (`/healthz`, `/readyz`, `/metrics`) are logged at `debug`.
 
 ### Demo app (`cmd/demo-app`)
 

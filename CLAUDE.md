@@ -16,6 +16,7 @@ Module path: github.com/yashhkataria/canary-controller
 - cmd/controller, cmd/demo-app: main packages only; keep them thin
 - internal/api: HTTP handlers
 - internal/demoapp: demo app handlers, config and metrics
+- internal/logging: logger carried in context.Context (logging.With/From)
 - internal/rollout: state machine and reconcile loop
 - internal/analysis: Prometheus queries and decide()
 - internal/k8s: client-go wrappers (scale, set image)
@@ -38,9 +39,9 @@ Empty folders hold a .gitkeep; delete it once a folder has real files.
 - Never create cloud resources (GCP) without asking first.
 
 ## Commands
-make help | make tools | make test | make build-demo
-make kind-up | make kind-down | make deploy | make load | make load-stop
-make prometheus | make grafana | make alertmanager
+make help | make tools | make test | make test-unit | make build-demo | make build-controller
+make kind-up | make kind-down | make deploy | make controller-reload | make load | make load-stop
+make prometheus | make grafana | make alertmanager | make controller
 Later phases add: make build | make lint
 
 ## Status
@@ -50,4 +51,8 @@ make test, make build-demo.
 Phase 2 done: kind cluster, kube-prometheus-stack (Alertmanager on, demo
 alert rules), demo Deployments + PodMonitor, MongoDB and Redis in
 canary-system, k6 Job (make kind-up | deploy | load).
-Next: Phase 3, controller API and MongoDB store.
+Phase 3 done: controller REST API (internal/api) with validation and
+request logging, MongoDB store (internal/store) with version-fenced updates
+and the unique partial index, rollout types (internal/rollout),
+testcontainers integration tests, controller image and manifests.
+Next: Phase 4, rollout engine.

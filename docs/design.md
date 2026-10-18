@@ -158,7 +158,7 @@ A replica that pauses past its TTL (a long GC pause, a network partition) may st
 
 | Method | Path | Does |
 | --- | --- | --- |
-| POST | `/v1/rollouts` | Start a rollout: namespace, app, image, steps, analysis settings. 201 with id; 409 if one is active |
+| POST | `/v1/create-rollout` | Start a rollout: namespace, app, image, steps, analysis settings. 201 with id; 409 if one is active |
 | GET | `/v1/rollouts/{id}` | Phase, step, last check |
 | GET | `/v1/rollouts?app=demo` | History for an app |
 | GET | `/v1/rollouts/{id}/events` | Audit trail |
@@ -169,7 +169,7 @@ A replica that pauses past its TTL (a long GC pause, a network partition) may st
 Example request:
 
 ```json
-POST /v1/rollouts
+POST /v1/create-rollout
 {
   "namespace": "default",
   "app": "demo",
@@ -179,7 +179,23 @@ POST /v1/rollouts
 }
 ```
 
+Creating uses its own path, `POST /v1/create-rollout`; everything else lives under `/v1/rollouts`, and the 201 response's `Location` header points to `/v1/rollouts/{id}`. `POST /v1/rollouts` returns 405.
+
 Fields left out of `analysis` take the starting values above. Use Go's standard `net/http` router (method and path patterns, Go 1.22+); no web framework.
+
+**Validation** (400 with per-field messages):
+
+- `namespace`, `app`: Kubernetes names (lowercase letters, digits, `-`; at most 63 characters).
+- `image`: required, no whitespace.
+- `steps`: 1 to 10 weights, each a multiple of 10 (one pod out of 10) between 10 and 100, strictly increasing. The last step need not be 100; the rollout promotes after it.
+- `analysis`: `interval` ≥ 5 s (the scrape interval), `checksPerStep` and `failureLimit` ≥ 1, `maxErrorRate` and `errorMargin` in 0–1, `maxP99Ms` > 0, `latencyFactor` ≥ 1, `minRequests` ≥ 0, `maxWait` ≥ `interval`.
+- Unknown JSON fields are rejected, so a typo is an error rather than a silently ignored setting. Bodies must be `application/json` (415 otherwise) and at most 1 MB (413).
+
+**Errors** are always `{"error": "...", "fields": {"steps": "..."}}`, with `fields` present only for validation errors.
+
+`stableImage` is empty when a rollout is created; the rollout engine (Phase 4) reads the current stable image from the cluster when the rollout starts. Durations are JSON strings (`"20s"`) in the API and nanoseconds in MongoDB.
+
+Every response carries `X-Request-ID` (the caller's, if valid, else a generated one), and every log line for that request includes it as `request_id`.
 
 ## Demo app
 

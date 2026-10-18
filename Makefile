@@ -3,6 +3,8 @@
 DOCKER ?= docker
 DEMO_DOCKERFILE := cmd/demo-app/Dockerfile
 DEMO_IMAGES := demo:v1 demo:v2 demo:v2-bad demo:v2-slow
+CONTROLLER_DOCKERFILE := cmd/controller/Dockerfile
+CONTROLLER_IMAGE := controller:dev
 
 CLUSTER ?= canary
 KUBE_CONTEXT ?= kind-$(CLUSTER)
@@ -12,16 +14,19 @@ CHART_VERSION := 92.10.1
 RATE ?= 50
 DURATION ?= 10m
 
-.PHONY: help tools test build-demo kind-up kind-down deploy load load-stop prometheus grafana alertmanager
+.PHONY: help tools test test-unit build-demo build-controller kind-up kind-down deploy controller-reload load load-stop prometheus grafana alertmanager controller
 
 help: ## List available targets
-	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-13s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-18s %s\n", $$1, $$2}'
 
 tools: ## Check that the required local tools are installed
 	@bash scripts/check-tools.sh
 
-test: ## Run unit tests with the race detector
+test: ## Run all tests with the race detector (integration tests need Docker)
 	go test -race ./...
+
+test-unit: ## Run unit tests only, skipping the Docker-based integration tests
+	go test -race -short ./...
 
 build-demo: ## Build demo:v1, demo:v2, demo:v2-bad (20% errors), demo:v2-slow (+800 ms)
 	$(DOCKER) build -f $(DEMO_DOCKERFILE) -t demo:v1 --build-arg VERSION=v1 .
@@ -29,14 +34,17 @@ build-demo: ## Build demo:v1, demo:v2, demo:v2-bad (20% errors), demo:v2-slow (+
 	$(DOCKER) build -f $(DEMO_DOCKERFILE) -t demo:v2-bad --build-arg VERSION=v2-bad --build-arg ERROR_RATE=0.2 .
 	$(DOCKER) build -f $(DEMO_DOCKERFILE) -t demo:v2-slow --build-arg VERSION=v2-slow --build-arg EXTRA_LATENCY_MS=800 .
 
-kind-up: build-demo ## Create the kind cluster and load the demo images into it
+build-controller: ## Build the controller image (controller:dev)
+	$(DOCKER) build -f $(CONTROLLER_DOCKERFILE) -t $(CONTROLLER_IMAGE) .
+
+kind-up: build-demo build-controller ## Create the kind cluster and load the demo and controller images into it
 	@kind get clusters | grep -qx $(CLUSTER) || kind create cluster --config deploy/kind/cluster.yaml
-	kind load docker-image $(DEMO_IMAGES) --name $(CLUSTER)
+	kind load docker-image $(DEMO_IMAGES) $(CONTROLLER_IMAGE) --name $(CLUSTER)
 
 kind-down: ## Delete the kind cluster
 	kind delete cluster --name $(CLUSTER)
 
-deploy: ## Install monitoring, MongoDB, Redis and the demo app
+deploy: ## Install monitoring, MongoDB, Redis, the demo app and the controller
 	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
 	helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
 		--kube-context $(KUBE_CONTEXT) --namespace monitoring --create-namespace \
@@ -45,7 +53,14 @@ deploy: ## Install monitoring, MongoDB, Redis and the demo app
 	$(KUBECTL) apply -k deploy/k8s/demo
 	$(KUBECTL) -n canary-system rollout status statefulset/mongodb --timeout 5m
 	$(KUBECTL) -n canary-system rollout status statefulset/redis --timeout 5m
+	$(KUBECTL) apply -k deploy/k8s/controller
 	$(KUBECTL) -n default rollout status deployment/demo-stable --timeout 5m
+	$(KUBECTL) -n canary-system rollout status deployment/controller --timeout 5m
+
+controller-reload: build-controller ## Rebuild the controller, load it into kind and restart it
+	kind load docker-image $(CONTROLLER_IMAGE) --name $(CLUSTER)
+	$(KUBECTL) -n canary-system rollout restart deployment/controller
+	$(KUBECTL) -n canary-system rollout status deployment/controller --timeout 5m
 
 load: ## Start steady k6 load on the demo Service (RATE=50 requests/s, DURATION=10m)
 	$(KUBECTL) -n default delete job k6-steady --ignore-not-found --wait
@@ -64,3 +79,6 @@ grafana: ## Open Grafana on http://localhost:3000
 
 alertmanager: ## Open Alertmanager on http://localhost:9093
 	$(KUBECTL) -n monitoring port-forward svc/monitoring-kube-prometheus-alertmanager 9093:9093
+
+controller: ## Open the controller API on http://localhost:8081
+	$(KUBECTL) -n canary-system port-forward svc/controller 8081:80

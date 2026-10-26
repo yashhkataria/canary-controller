@@ -16,6 +16,7 @@ type Store interface {
 	CreateRollout(ctx context.Context, r rollout.Rollout) (rollout.Rollout, error)
 	GetRollout(ctx context.Context, id bson.ObjectID) (rollout.Rollout, error)
 	ListRollouts(ctx context.Context, f store.ListFilter) ([]rollout.Rollout, error)
+	UpdateRollout(ctx context.Context, r rollout.Rollout) (rollout.Rollout, error)
 	AppendEvent(ctx context.Context, e rollout.Event) (rollout.Event, error)
 	ListEvents(ctx context.Context, rolloutID bson.ObjectID) ([]rollout.Event, error)
 	Ping(ctx context.Context) error

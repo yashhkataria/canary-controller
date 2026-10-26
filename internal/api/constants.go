@@ -34,3 +34,21 @@ var quietPaths = map[string]bool{
 	"/readyz":  true,
 	"/metrics": true,
 }
+
+const (
+	maxConflictRetries = 3
+	abortReason        = "aborted by user"
+	promoteMessage     = "promote requested by user; skipping remaining steps"
+)
+
+var abortablePhases = map[rollout.Phase]bool{
+	rollout.PhasePending:     true,
+	rollout.PhaseProgressing: true,
+	rollout.PhaseAnalyzing:   true,
+	rollout.PhasePromoting:   true,
+}
+
+var promotablePhases = map[rollout.Phase]bool{
+	rollout.PhaseProgressing: true,
+	rollout.PhaseAnalyzing:   true,
+}

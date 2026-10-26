@@ -1,9 +1,13 @@
 package rollout
 
 import (
+	"context"
+	"log/slog"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+
+	"github.com/yashhkataria/canary-controller/internal/k8s"
 )
 
 type Phase string
@@ -36,23 +40,25 @@ type LastCheck struct {
 }
 
 type Rollout struct {
-	ID          bson.ObjectID `json:"id" bson:"_id,omitempty"`
-	Namespace   string        `json:"namespace" bson:"namespace"`
-	App         string        `json:"app" bson:"app"`
-	StableImage string        `json:"stableImage" bson:"stableImage"`
-	CanaryImage string        `json:"canaryImage" bson:"canaryImage"`
-	Steps       []int         `json:"steps" bson:"steps"`
-	CurrentStep int           `json:"currentStep" bson:"currentStep"`
-	Phase       Phase         `json:"phase" bson:"phase"`
-	Analysis    Analysis      `json:"analysis" bson:"analysis"`
-	LastCheck   *LastCheck    `json:"lastCheck,omitempty" bson:"lastCheck,omitempty"`
-	Active      bool          `json:"active" bson:"active"`
-	Owner       string        `json:"owner,omitempty" bson:"owner,omitempty"`
-	Version     int64         `json:"version" bson:"version"`
-	Reason      string        `json:"reason,omitempty" bson:"reason,omitempty"`
-	CreatedAt   time.Time     `json:"createdAt" bson:"createdAt"`
-	UpdatedAt   time.Time     `json:"updatedAt" bson:"updatedAt"`
-	FinishedAt  *time.Time    `json:"finishedAt,omitempty" bson:"finishedAt,omitempty"`
+	ID            bson.ObjectID `json:"id" bson:"_id,omitempty"`
+	Namespace     string        `json:"namespace" bson:"namespace"`
+	App           string        `json:"app" bson:"app"`
+	StableImage   string        `json:"stableImage" bson:"stableImage"`
+	CanaryImage   string        `json:"canaryImage" bson:"canaryImage"`
+	Steps         []int         `json:"steps" bson:"steps"`
+	CurrentStep   int           `json:"currentStep" bson:"currentStep"`
+	Phase         Phase         `json:"phase" bson:"phase"`
+	Analysis      Analysis      `json:"analysis" bson:"analysis"`
+	LastCheck     *LastCheck    `json:"lastCheck,omitempty" bson:"lastCheck,omitempty"`
+	Active        bool          `json:"active" bson:"active"`
+	Owner         string        `json:"owner,omitempty" bson:"owner,omitempty"`
+	Version       int64         `json:"version" bson:"version"`
+	Reason        string        `json:"reason,omitempty" bson:"reason,omitempty"`
+	StepStartedAt *time.Time    `json:"stepStartedAt,omitempty" bson:"stepStartedAt,omitempty"`
+	WaitingSince  *time.Time    `json:"waitingSince,omitempty" bson:"waitingSince,omitempty"`
+	CreatedAt     time.Time     `json:"createdAt" bson:"createdAt"`
+	UpdatedAt     time.Time     `json:"updatedAt" bson:"updatedAt"`
+	FinishedAt    *time.Time    `json:"finishedAt,omitempty" bson:"finishedAt,omitempty"`
 }
 
 type Event struct {
@@ -62,4 +68,48 @@ type Event struct {
 	Type      string             `json:"type" bson:"type"`
 	Message   string             `json:"message" bson:"message"`
 	Metrics   map[string]float64 `json:"metrics,omitempty" bson:"metrics,omitempty"`
+}
+
+type Verdict string
+
+type Store interface {
+	ListActive(ctx context.Context) ([]Rollout, error)
+	UpdateRollout(ctx context.Context, r Rollout) (Rollout, error)
+	AppendEvent(ctx context.Context, e Event) (Event, error)
+}
+
+type Cluster interface {
+	Status(ctx context.Context, namespace, name, container string) (k8s.DeploymentStatus, error)
+	SetReplicas(ctx context.Context, namespace, name string, replicas int32) error
+	SetImage(ctx context.Context, namespace, name, container, image string) error
+}
+
+type Analyzer interface {
+	Analyze(ctx context.Context, r Rollout, now time.Time) (Verdict, string, error)
+}
+
+type Engine struct {
+	store    Store
+	cluster  Cluster
+	analyzer Analyzer
+	owner    string
+	interval time.Duration
+	now      func() time.Time
+	logger   *slog.Logger
+}
+
+type EngineOptions struct {
+	Owner    string
+	Interval time.Duration
+	Logger   *slog.Logger
+	Now      func() time.Time
+}
+
+type FixedWait struct{}
+
+type desiredState struct {
+	stableImage string
+	canaryImage string
+	stable      int32
+	canary      int32
 }

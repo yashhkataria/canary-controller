@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: controller
+  namespace: canary-system
   labels:
     app: controller
 spec:
@@ -45,6 +46,12 @@ spec:
               value: redis.canary-system:6379
             - name: LOG_LEVEL
               value: info
+            - name: ENGINE_INTERVAL
+              value: 2s
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           ports:
             - name: http
               containerPort: 8080

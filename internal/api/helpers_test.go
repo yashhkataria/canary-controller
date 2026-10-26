@@ -20,12 +20,13 @@ import (
 )
 
 type fakeStore struct {
-	mu         sync.Mutex
-	rollouts   map[bson.ObjectID]rollout.Rollout
-	events     []rollout.Event
-	lastFilter store.ListFilter
-	pingErr    error
-	panicOnGet bool
+	mu            sync.Mutex
+	rollouts      map[bson.ObjectID]rollout.Rollout
+	events        []rollout.Event
+	lastFilter    store.ListFilter
+	pingErr       error
+	panicOnGet    bool
+	conflictsLeft int
 }
 
 func newFakeStore() *fakeStore {
@@ -74,6 +75,36 @@ func (f *fakeStore) ListRollouts(_ context.Context, filter store.ListFilter) ([]
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeStore) UpdateRollout(_ context.Context, r rollout.Rollout) (rollout.Rollout, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.conflictsLeft > 0 {
+		f.conflictsLeft--
+		return rollout.Rollout{}, store.ErrVersionConflict
+	}
+	cur, ok := f.rollouts[r.ID]
+	if !ok {
+		return rollout.Rollout{}, store.ErrNotFound
+	}
+	if cur.Version != r.Version {
+		return rollout.Rollout{}, store.ErrVersionConflict
+	}
+	r.Version++
+	f.rollouts[r.ID] = r
+	return r, nil
+}
+
+func (f *fakeStore) setPhase(id bson.ObjectID, p rollout.Phase) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.rollouts[id]
+	r.Phase = p
+	if p.Terminal() {
+		r.Active = false
+	}
+	f.rollouts[id] = r
 }
 
 func (f *fakeStore) AppendEvent(_ context.Context, e rollout.Event) (rollout.Event, error) {

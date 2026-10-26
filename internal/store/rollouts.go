@@ -70,6 +70,24 @@ func (s *Store) ListRollouts(ctx context.Context, f ListFilter) ([]rollout.Rollo
 	return out, nil
 }
 
+func (s *Store) ListActive(ctx context.Context) ([]rollout.Rollout, error) {
+	ctx, cancel := withTimeout(ctx)
+	defer cancel()
+
+	opts := options.Find().
+		SetSort(bson.D{{Key: "updatedAt", Value: 1}}).
+		SetLimit(MaxListLimit)
+	cur, err := s.rollouts.Find(ctx, bson.D{{Key: "active", Value: true}}, opts)
+	if err != nil {
+		return nil, fmt.Errorf("list active rollouts: %w", err)
+	}
+	out := []rollout.Rollout{}
+	if err := cur.All(ctx, &out); err != nil {
+		return nil, fmt.Errorf("decode active rollouts: %w", err)
+	}
+	return out, nil
+}
+
 func (s *Store) UpdateRollout(ctx context.Context, r rollout.Rollout) (rollout.Rollout, error) {
 	ctx, cancel := withTimeout(ctx)
 	defer cancel()
@@ -85,6 +103,8 @@ func (s *Store) UpdateRollout(ctx context.Context, r rollout.Rollout) (rollout.R
 			{Key: "owner", Value: r.Owner},
 			{Key: "reason", Value: r.Reason},
 			{Key: "finishedAt", Value: r.FinishedAt},
+			{Key: "stepStartedAt", Value: r.StepStartedAt},
+			{Key: "waitingSince", Value: r.WaitingSince},
 			{Key: "updatedAt", Value: now()},
 		}},
 		{Key: "$inc", Value: bson.D{{Key: "version", Value: 1}}},

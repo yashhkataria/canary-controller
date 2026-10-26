@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -17,12 +18,14 @@ func TestLoadConfig(t *testing.T) {
 			name: "defaults",
 			env:  map[string]string{},
 			want: Config{
-				Port:          defaultPort,
-				MongoURI:      defaultMongoURI,
-				MongoDatabase: defaultMongoDatabase,
-				PrometheusURL: defaultPrometheusURL,
-				RedisAddr:     defaultRedisAddr,
-				LogLevel:      slog.LevelInfo,
+				Port:           defaultPort,
+				MongoURI:       defaultMongoURI,
+				MongoDatabase:  defaultMongoDatabase,
+				PrometheusURL:  defaultPrometheusURL,
+				RedisAddr:      defaultRedisAddr,
+				LogLevel:       slog.LevelInfo,
+				EngineInterval: 2 * time.Second,
+				Owner:          defaultOwner,
 			},
 		},
 		{
@@ -30,10 +33,12 @@ func TestLoadConfig(t *testing.T) {
 			env: map[string]string{
 				envPort: "9000", envMongoURI: "mongodb://localhost:27017", envMongoDatabase: "test",
 				envPrometheusURL: "https://prom.example:9090", envRedisAddr: "localhost:6379", envLogLevel: "debug",
+				envEngineInterval: "5s", envKubeconfig: "/tmp/kc", envPodName: "controller-abc", envHostname: "ignored",
 			},
 			want: Config{
 				Port: "9000", MongoURI: "mongodb://localhost:27017", MongoDatabase: "test",
 				PrometheusURL: "https://prom.example:9090", RedisAddr: "localhost:6379", LogLevel: slog.LevelDebug,
+				EngineInterval: 5 * time.Second, Kubeconfig: "/tmp/kc", Owner: "controller-abc",
 			},
 		},
 		{name: "port not a number", env: map[string]string{envPort: "http"}, wantErr: envPort},
@@ -43,6 +48,9 @@ func TestLoadConfig(t *testing.T) {
 		{name: "prometheus without scheme", env: map[string]string{envPrometheusURL: "prometheus:9090"}, wantErr: envPrometheusURL},
 		{name: "redis without port", env: map[string]string{envRedisAddr: "redis"}, wantErr: envRedisAddr},
 		{name: "unknown log level", env: map[string]string{envLogLevel: "loud"}, wantErr: envLogLevel},
+		{name: "engine interval not a duration", env: map[string]string{envEngineInterval: "2"}, wantErr: envEngineInterval},
+		{name: "engine interval too fast", env: map[string]string{envEngineInterval: "100ms"}, wantErr: envEngineInterval},
+		{name: "engine interval too slow", env: map[string]string{envEngineInterval: "2m"}, wantErr: envEngineInterval},
 		{name: "several errors at once", env: map[string]string{envPort: "x", envRedisAddr: "redis"}, wantErr: envRedisAddr},
 	}
 	for _, tt := range tests {
@@ -61,6 +69,13 @@ func TestLoadConfig(t *testing.T) {
 				t.Errorf("got %+v\nwant %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestOwnerFallsBackToHostname(t *testing.T) {
+	got, err := loadConfig(func(k string) string { return map[string]string{envHostname: "my-laptop"}[k] })
+	if err != nil || got.Owner != "my-laptop" {
+		t.Errorf("owner = %q (err %v), want my-laptop", got.Owner, err)
 	}
 }
 

@@ -255,3 +255,52 @@ func TestIndexesExist(t *testing.T) {
 		}
 	}
 }
+
+func TestListActiveAndStepTimes(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	done := finish(t, s, mustCreate(t, s, newRollout("default", "old")))
+	a := mustCreate(t, s, newRollout("default", "a"))
+	time.Sleep(2 * time.Millisecond)
+	b := mustCreate(t, s, newRollout("default", "b"))
+	time.Sleep(2 * time.Millisecond)
+
+	started := time.Now().UTC().Truncate(time.Millisecond)
+	a.Phase = rollout.PhaseAnalyzing
+	a.StepStartedAt = &started
+	a.WaitingSince = &started
+	a, err := s.UpdateRollout(ctx, a)
+	if err != nil {
+		t.Fatalf("UpdateRollout: %v", err)
+	}
+
+	active, err := s.ListActive(ctx)
+	if err != nil {
+		t.Fatalf("ListActive: %v", err)
+	}
+	var ids []bson.ObjectID
+	for _, r := range active {
+		ids = append(ids, r.ID)
+	}
+	if want := []bson.ObjectID{b.ID, a.ID}; !slices.Equal(ids, want) {
+		t.Errorf("active ids = %v, want %v (least recently updated first, %v excluded)", ids, want, done.ID)
+	}
+
+	got, err := s.GetRollout(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("GetRollout: %v", err)
+	}
+	if got.StepStartedAt == nil || !got.StepStartedAt.Equal(started) || got.WaitingSince == nil || !got.WaitingSince.Equal(started) {
+		t.Errorf("step times not stored: stepStartedAt=%v waitingSince=%v, want %v", got.StepStartedAt, got.WaitingSince, started)
+	}
+
+	a.StepStartedAt = nil
+	a.WaitingSince = nil
+	if a, err = s.UpdateRollout(ctx, a); err != nil {
+		t.Fatalf("clear step times: %v", err)
+	}
+	if a.StepStartedAt != nil || a.WaitingSince != nil {
+		t.Errorf("step times not cleared: %v %v", a.StepStartedAt, a.WaitingSince)
+	}
+}

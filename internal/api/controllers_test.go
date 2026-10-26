@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"testing"
@@ -143,13 +144,85 @@ func TestEmptyListsAreArrays(t *testing.T) {
 	}
 }
 
-func TestNotImplemented(t *testing.T) {
-	_, h, _ := newTestServer(t)
+func TestAbortAndPromoteByPhase(t *testing.T) {
+	phases := []rollout.Phase{
+		rollout.PhasePending, rollout.PhaseProgressing, rollout.PhaseAnalyzing, rollout.PhasePromoting,
+		rollout.PhaseRollingBack, rollout.PhaseSucceeded, rollout.PhaseRolledBack,
+	}
+	want := map[string]map[rollout.Phase]int{
+		"abort": {
+			rollout.PhasePending: 202, rollout.PhaseProgressing: 202, rollout.PhaseAnalyzing: 202, rollout.PhasePromoting: 202,
+			rollout.PhaseRollingBack: 409, rollout.PhaseSucceeded: 409, rollout.PhaseRolledBack: 409,
+		},
+		"promote": {
+			rollout.PhasePending: 409, rollout.PhaseProgressing: 202, rollout.PhaseAnalyzing: 202, rollout.PhasePromoting: 409,
+			rollout.PhaseRollingBack: 409, rollout.PhaseSucceeded: 409, rollout.PhaseRolledBack: 409,
+		},
+	}
+	nextPhase := map[string]rollout.Phase{"abort": rollout.PhaseRollingBack, "promote": rollout.PhasePromoting}
+	nextEvent := map[string]string{"abort": rollout.EventRollingBack, "promote": rollout.EventPromoting}
+
 	for _, action := range []string{"abort", "promote"} {
-		rec := send(t, h, http.MethodPost, "/v1/rollouts/"+bson.NewObjectID().Hex()+"/"+action, "", nil)
-		if rec.Code != http.StatusNotImplemented {
-			t.Errorf("%s = %d, want 501", action, rec.Code)
+		for _, phase := range phases {
+			t.Run(action+" from "+string(phase), func(t *testing.T) {
+				fs, h, _ := newTestServer(t)
+				created := mustCreateRollout(t, h, validBody(""))
+				fs.setPhase(created.ID, phase)
+
+				rec := send(t, h, http.MethodPost, "/v1/rollouts/"+created.ID.Hex()+"/"+action, "", nil)
+				if rec.Code != want[action][phase] {
+					t.Fatalf("status = %d %s, want %d", rec.Code, rec.Body.String(), want[action][phase])
+				}
+				stored, _ := fs.GetRollout(context.Background(), created.ID)
+				if rec.Code != http.StatusAccepted {
+					if stored.Phase != phase {
+						t.Errorf("rejected request still changed the phase to %s", stored.Phase)
+					}
+					return
+				}
+				got := decode[rollout.Rollout](t, rec)
+				if got.Phase != nextPhase[action] || stored.Phase != nextPhase[action] || got.WaitingSince == nil {
+					t.Errorf("phase = %s (stored %s), want %s with waitingSince set", got.Phase, stored.Phase, nextPhase[action])
+				}
+				if action == "abort" && got.Reason != abortReason {
+					t.Errorf("reason = %q", got.Reason)
+				}
+				if last := fs.events[len(fs.events)-1]; last.Type != nextEvent[action] {
+					t.Errorf("last event = %s, want %s", last.Type, nextEvent[action])
+				}
+			})
 		}
+	}
+}
+
+func TestAbortRetriesOnConflict(t *testing.T) {
+	tests := []struct {
+		name       string
+		conflicts  int
+		wantStatus int
+	}{
+		{name: "succeeds after two conflicts", conflicts: 2, wantStatus: http.StatusAccepted},
+		{name: "gives up after three", conflicts: 3, wantStatus: http.StatusConflict},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs, h, _ := newTestServer(t)
+			created := mustCreateRollout(t, h, validBody(""))
+			fs.conflictsLeft = tt.conflicts
+			if rec := send(t, h, http.MethodPost, "/v1/rollouts/"+created.ID.Hex()+"/abort", "", nil); rec.Code != tt.wantStatus {
+				t.Errorf("status = %d %s, want %d", rec.Code, rec.Body.String(), tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestAbortUnknownRollout(t *testing.T) {
+	_, h, _ := newTestServer(t)
+	if rec := send(t, h, http.MethodPost, "/v1/rollouts/"+bson.NewObjectID().Hex()+"/abort", "", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("abort of missing rollout = %d, want 404", rec.Code)
+	}
+	if rec := send(t, h, http.MethodPost, "/v1/rollouts/nope/promote", "", nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("promote with bad id = %d, want 400", rec.Code)
 	}
 }
 

@@ -9,8 +9,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/yashhkataria/canary-controller/internal/api"
+	"github.com/yashhkataria/canary-controller/internal/k8s"
+	"github.com/yashhkataria/canary-controller/internal/rollout"
 	"github.com/yashhkataria/canary-controller/internal/store"
 )
 
@@ -51,6 +54,21 @@ func run() error {
 	}
 	logger.Info("connected to mongodb", "database", cfg.MongoDatabase)
 
+	kc, err := k8s.New(cfg.Kubeconfig)
+	if err != nil {
+		return err
+	}
+	engine := rollout.NewEngine(st, kc, rollout.FixedWait{}, rollout.EngineOptions{
+		Owner:    cfg.Owner,
+		Interval: cfg.EngineInterval,
+		Logger:   logger,
+	})
+	engineDone := make(chan struct{})
+	go func() {
+		defer close(engineDone)
+		engine.Run(ctx)
+	}()
+
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
 		Handler:           api.New(st, logger).Handler(),
@@ -72,6 +90,11 @@ func run() error {
 	stop()
 
 	logger.Info("shutting down", "timeout", shutdownTimeout.String())
+	select {
+	case <-engineDone:
+	case <-time.After(engineStopTimeout):
+		logger.Warn("rollout engine did not stop in time")
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {

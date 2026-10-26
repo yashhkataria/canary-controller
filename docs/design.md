@@ -69,7 +69,27 @@ Capacity must never drop:
 - **Promote:** set demo-stable's image to the new image, scale it to 10, wait until ready, then scale demo-canary to 0.
 - **Roll back or abort:** scale demo-stable back to 10 first, wait until ready, then scale demo-canary to 0.
 
-Wait for both Deployments to report their desired ready replicas before judging a step.
+- **Within a step:** grow whichever Deployment needs more pods first, wait until it is ready, and only then shrink the other one. Moving from 10/0 to 9/1 means canary to 1, wait, then stable to 9.
+
+Wait for both Deployments to report their desired ready replicas before judging a step. "Ready at N" means `observedGeneration ≥ generation` and `replicas`, `updatedReplicas`, `readyReplicas` and `availableReplicas` all equal N, so a status read just after a patch is never mistaken for the new state.
+
+### How the engine reconciles
+
+A worker scans active rollouts every 2 s (`ENGINE_INTERVAL`), least recently updated first, and reconciles each one with a 10 s deadline. Each reconcile reads the stored rollout and both Deployments, then does at most one thing: one patch, one phase change, or nothing yet. Doing it twice changes nothing, and phase changes are written only after the cluster has reached the state, so a restarted controller simply continues.
+
+| Phase | Reconcile does | Next |
+| --- | --- | --- |
+| Pending | Record demo-stable's current image as `stableImage`, set `owner` | Progressing, step 0 |
+| Progressing | Set demo-canary's image; canary = round(10 × weight / 100), stable = 10 − canary, applied with the capacity-safe order above | Analyzing when both are ready |
+| Analyzing | Re-apply the step's replica counts if they drifted, then ask the analyzer | Next step, Promoting after the last, RollingBack on fail |
+| Promoting | Stable to the new image and 10 pods, then canary to 0 | Succeeded |
+| RollingBack | Stable back to `stableImage` (in case promotion had started) and 10 pods, then canary to 0 | RolledBack |
+
+Until Phase 5 the analyzer is a fixed wait: a step passes once `interval × checksPerStep` has passed since it became ready.
+
+**Safety nets.** If a step or a promotion is not ready within `maxWait` (for example an image that cannot be pulled), the rollout goes to RollingBack with the reason. If demo-stable or demo-canary is missing, or RBAC forbids access, the rollout ends as RolledBack before touching anything. A version conflict on a write means someone else changed the rollout first; the engine skips that tick and re-reads.
+
+**Two engines at once.** While a controller pod is being replaced, the old pod keeps running through its preStop pause while the new one starts, so two engines can briefly reconcile the same rollout. The version check rejects whichever writes second. Phase 6 adds per-rollout Redis locks so this stops happening.
 
 ## Analysis rules
 
@@ -112,6 +132,17 @@ A step passes after `checksPerStep` passing checks in a row. `failureLimit` fail
 
 These are starting values, not tuned ones; Phase 8 tunes them. Prometheus scrapes every 5 s, so a 1-minute window covers 12 scrapes.
 
+## Kubernetes access (RBAC)
+
+The controller's ServiceAccount (`canary-system/controller`) gets a Role in each namespace it may roll out in, currently only `default`:
+
+| Resource | Verbs |
+| --- | --- |
+| `deployments` | `get`, `patch` (read status, set the container image) |
+| `deployments/scale` | `get`, `patch` (set replicas) |
+
+Nothing else: no `list`, `create`, `update` or `delete`, no pods or Secrets, no other namespace. Replica changes are merge patches on the `scale` subresource; image changes are strategic-merge patches on the one container (or the one named after the app). Deployments are found by name: `<app>-stable` and `<app>-canary`.
+
 ## Data model (MongoDB)
 
 **`rollouts`**
@@ -130,6 +161,8 @@ These are starting values, not tuned ones; Phase 8 tunes them. Prometheus scrape
 | `owner` | string | Replica holding the lock |
 | `version` | int | Optimistic concurrency / fencing token |
 | `reason` | string | Why it rolled back, if it did |
+| `stepStartedAt` | time | When the current step became ready (start of its analysis) |
+| `waitingSince` | time | When the engine started waiting for pods to become ready; compared with `maxWait` |
 | `createdAt`, `updatedAt`, `finishedAt` | time | |
 
 **`events`**: `rolloutId`, `at`, `type`, `message`, `metrics`. The audit trail; every phase change, check and rollback writes one.
@@ -162,8 +195,8 @@ A replica that pauses past its TTL (a long GC pause, a network partition) may st
 | GET | `/v1/rollouts/{id}` | Phase, step, last check |
 | GET | `/v1/rollouts?app=demo` | History for an app |
 | GET | `/v1/rollouts/{id}/events` | Audit trail |
-| POST | `/v1/rollouts/{id}/abort` | Roll back now |
-| POST | `/v1/rollouts/{id}/promote` | Skip remaining analysis (manual override) |
+| POST | `/v1/rollouts/{id}/abort` | Roll back now. 202 from Pending, Progressing, Analyzing or Promoting; 409 otherwise |
+| POST | `/v1/rollouts/{id}/promote` | Skip the remaining steps and promote (manual override). 202 from Progressing or Analyzing; 409 otherwise (including Pending, before the stable image is recorded) |
 | GET | `/healthz`, `/readyz`, `/metrics` | Probes and Prometheus metrics |
 
 Example request:

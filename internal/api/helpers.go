@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
@@ -54,6 +55,10 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeError(w http.ResponseWriter, code int, msg string, fields map[string]string) {
 	writeJSON(w, code, errorResponse{Error: msg, Fields: fields})
+}
+
+func now() time.Time {
+	return time.Now().UTC().Truncate(time.Millisecond)
 }
 
 func (s *Server) internalError(w http.ResponseWriter, r *http.Request, op string, err error) {

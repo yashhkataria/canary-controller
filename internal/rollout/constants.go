@@ -13,7 +13,25 @@ const (
 )
 
 const (
-	EventCreated = "Created"
+	EventCreated     = "Created"
+	EventStarted     = "Started"
+	EventStepReady   = "StepReady"
+	EventStepPassed  = "StepPassed"
+	EventPromoting   = "Promoting"
+	EventSucceeded   = "Succeeded"
+	EventRollingBack = "RollingBack"
+	EventRolledBack  = "RolledBack"
+)
+
+const (
+	VerdictPass         Verdict = "pass"
+	VerdictFail         Verdict = "fail"
+	VerdictInconclusive Verdict = "inconclusive"
+)
+
+const (
+	DefaultEngineInterval = 2 * time.Second
+	reconcileTimeout      = 10 * time.Second
 )
 
 const TotalReplicas = 10

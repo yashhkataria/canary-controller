@@ -1,9 +1,9 @@
 package store
 
-import "errors"
+import "github.com/yashhkataria/canary-controller/internal/rollout"
 
 var (
-	ErrNotFound            = errors.New("rollout not found")
-	ErrActiveRolloutExists = errors.New("an active rollout already exists for this app")
-	ErrVersionConflict     = errors.New("rollout was changed by someone else")
+	ErrNotFound            = rollout.ErrNotFound
+	ErrActiveRolloutExists = rollout.ErrActiveRolloutExists
+	ErrVersionConflict     = rollout.ErrVersionConflict
 )

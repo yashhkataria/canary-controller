@@ -55,4 +55,8 @@ Phase 3 done: controller REST API (internal/api) with validation and
 request logging, MongoDB store (internal/store) with version-fenced updates
 and the unique partial index, rollout types (internal/rollout),
 testcontainers integration tests, controller image and manifests.
-Next: Phase 4, rollout engine.
+Phase 4 done: internal/k8s (client-go, scale-subresource patches, image
+patches, readiness check), rollout engine in internal/rollout (2 s
+level-triggered reconcile, capacity-safe ordering, fixed-wait analysis,
+maxWait safety net), abort/promote endpoints, least-privilege RBAC.
+Next: Phase 5, automated analysis and rollback.

@@ -2,7 +2,7 @@
 
 A canary deployment controller for Kubernetes, written in Go. It shifts traffic to a new version in stages, checks Prometheus error rate and p99 latency after each stage, and promotes or rolls back automatically.
 
-> **Status:** work in progress. Phases 0–3 (project setup, demo app, local cluster, controller API and store) are done; see the roadmap below.
+> **Status:** work in progress. Phases 0–4 (project setup, demo app, local cluster, controller API and store, rollout engine) are done; see the roadmap below.
 
 ## How it works
 
@@ -22,7 +22,7 @@ Go · Kubernetes (client-go) · Docker · MongoDB · Redis · Prometheus · Graf
 - [x] Phase 1: demo app with error and latency injection
 - [x] Phase 2: local cluster with Prometheus and steady load
 - [x] Phase 3: controller API and MongoDB store
-- [ ] Phase 4: rollout engine
+- [x] Phase 4: rollout engine
 - [ ] Phase 5: automated analysis and rollback
 - [ ] Phase 6: high availability with Redis locks
 - [ ] Phase 7: observability
@@ -69,7 +69,17 @@ curl -s 'localhost:8081/v1/rollouts?app=demo'
 curl -s localhost:8081/v1/rollouts/<id>/events
 ```
 
-In Phase 3 a new rollout is only stored as `Pending`; nothing changes in the cluster yet, and `abort`/`promote` return 501.
+The engine picks the rollout up within 2 s and moves pods step by step (1/9, 5/5, 10/0), then promotes: demo-stable runs the new image on 10 pods and demo-canary goes back to 0. Until Phase 5 each step passes after a fixed wait of `interval × checksPerStep` (60 s by default; send `"analysis":{"interval":"5s","checksPerStep":2}` to try it quickly).
+
+```bash
+curl -s -X POST localhost:8081/v1/rollouts/<id>/abort
+```
+
+```bash
+curl -s -X POST localhost:8081/v1/rollouts/<id>/promote
+```
+
+Abort rolls back (stable to 10 first, then canary to 0); promote skips the remaining steps. Both return 202, or 409 when the rollout's phase doesn't allow it. Watch it happen with `kubectl get deploy demo-stable demo-canary -w`.
 
 ## Configuration
 
@@ -82,6 +92,9 @@ In Phase 3 a new rollout is only stored as `Pending`; nothing changes in the clu
 | `MONGO_DATABASE` | Database for `rollouts` and `events` | `canary` |
 | `PROMETHEUS_URL` | Prometheus base URL (used from Phase 5) | `http://monitoring-kube-prometheus-prometheus.monitoring:9090` |
 | `REDIS_ADDR` | Redis `host:port` (used from Phase 6) | `redis.canary-system:6379` |
+| `ENGINE_INTERVAL` | How often the engine scans active rollouts (500ms to 1m) | `2s` |
+| `KUBECONFIG` | Kubeconfig to use when not running in a cluster | in-cluster config, then `~/.kube/config` |
+| `POD_NAME` | This replica's name, stored as a rollout's `owner` | the Deployment sets it; falls back to `HOSTNAME` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error` | `info` |
 
 Invalid values stop the controller at startup. Probe requests (`/healthz`, `/readyz`, `/metrics`) are logged at `debug`.

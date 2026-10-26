@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func loadConfig(getenv func(string) string) (Config, error) {
@@ -17,6 +18,8 @@ func loadConfig(getenv func(string) string) (Config, error) {
 		MongoDatabase: withDefault(getenv(envMongoDatabase), defaultMongoDatabase),
 		PrometheusURL: withDefault(getenv(envPrometheusURL), defaultPrometheusURL),
 		RedisAddr:     withDefault(getenv(envRedisAddr), defaultRedisAddr),
+		Kubeconfig:    getenv(envKubeconfig),
+		Owner:         withDefault(getenv(envPodName), withDefault(getenv(envHostname), defaultOwner)),
 	}
 
 	var errs []error
@@ -38,6 +41,12 @@ func loadConfig(getenv func(string) string) (Config, error) {
 	if err := cfg.LogLevel.UnmarshalText([]byte(withDefault(getenv(envLogLevel), defaultLogLevel))); err != nil {
 		errs = append(errs, fmt.Errorf("%s must be debug, info, warn or error", envLogLevel))
 	}
+	raw := withDefault(getenv(envEngineInterval), defaultEngineInterval)
+	if d, err := time.ParseDuration(raw); err != nil || d < minEngineInterval || d > maxEngineInterval {
+		errs = append(errs, fmt.Errorf("%s must be a duration from %s to %s, got %q", envEngineInterval, minEngineInterval, maxEngineInterval, raw))
+	} else {
+		cfg.EngineInterval = d
+	}
 	return cfg, errors.Join(errs...)
 }
 
@@ -56,6 +65,9 @@ func (c Config) logValue() slog.Attr {
 		"prometheus_url", c.PrometheusURL,
 		"redis_addr", c.RedisAddr,
 		"log_level", c.LogLevel.String(),
+		"engine_interval", c.EngineInterval.String(),
+		"kubeconfig", c.Kubeconfig,
+		"owner", c.Owner,
 	)
 }
 

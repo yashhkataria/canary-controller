@@ -21,6 +21,8 @@ import (
 	"github.com/yashhkataria/canary-controller/internal/k8s"
 )
 
+var deploymentsGVR = appsv1.SchemeGroupVersion.WithResource("deployments")
+
 type memStore struct {
 	mu       sync.Mutex
 	rollouts map[bson.ObjectID]Rollout
@@ -61,6 +63,28 @@ func (m *memStore) AppendEvent(_ context.Context, e Event) (Event, error) {
 	return e, nil
 }
 
+func (m *memStore) eventsOf(typ string) []Event {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []Event{}
+	for _, e := range m.events {
+		if e.Type == typ {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func (m *memStore) phaseEventTypes() []string {
+	out := []string{}
+	for _, t := range m.eventTypes() {
+		if t != EventCheck {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func (m *memStore) eventTypes() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -71,13 +95,48 @@ func (m *memStore) eventTypes() []string {
 	return out
 }
 
+type scriptedAnalyzer struct {
+	mu       sync.Mutex
+	verdicts []Verdict
+	fallback Verdict
+	err      error
+	calls    int
+}
+
+func (a *scriptedAnalyzer) Check(_ context.Context, _ Rollout, now time.Time) (LastCheck, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.calls++
+	if a.err != nil {
+		return LastCheck{}, a.err
+	}
+	v := a.fallback
+	if len(a.verdicts) > 0 {
+		v, a.verdicts = a.verdicts[0], a.verdicts[1:]
+	}
+	return LastCheck{
+		At:      now,
+		Verdict: v,
+		Reason:  "scripted " + string(v),
+		Stable:  TrackMetrics{ErrorRate: 0.001, P99Ms: 5, Requests: 900},
+		Canary:  TrackMetrics{ErrorRate: 0.002, P99Ms: 6, Requests: 100},
+	}, nil
+}
+
+func (a *scriptedAnalyzer) callCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.calls
+}
+
 type harness struct {
-	t      *testing.T
-	cs     *fake.Clientset
-	store  *memStore
-	engine *Engine
-	now    time.Time
-	id     bson.ObjectID
+	t        *testing.T
+	cs       *fake.Clientset
+	store    *memStore
+	engine   *Engine
+	analyzer *scriptedAnalyzer
+	now      time.Time
+	id       bson.ObjectID
 }
 
 func newHarness(t *testing.T, steps []int, objects ...runtime.Object) *harness {
@@ -100,7 +159,8 @@ func newHarness(t *testing.T, steps []int, objects ...runtime.Object) *harness {
 		ID: h.id, Namespace: "default", App: "demo", CanaryImage: "demo:v2",
 		Steps: steps, Phase: PhasePending, Analysis: a, Active: true, Version: 1,
 	}
-	h.engine = NewEngine(h.store, k8s.NewFromClientset(h.cs), FixedWait{}, EngineOptions{
+	h.analyzer = &scriptedAnalyzer{fallback: VerdictPass}
+	h.engine = NewEngine(h.store, k8s.NewFromClientset(h.cs), h.analyzer, EngineOptions{
 		Owner:  "controller-0",
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now:    func() time.Time { return h.now },
@@ -194,6 +254,20 @@ func (h *harness) setPhase(p Phase) {
 	h.store.rollouts[h.id] = r
 }
 
+func (h *harness) setAnalysis(mutate func(*Analysis)) {
+	h.store.mu.Lock()
+	defer h.store.mu.Unlock()
+	r := h.store.rollouts[h.id]
+	mutate(&r.Analysis)
+	h.store.rollouts[h.id] = r
+}
+
+func (h *harness) tickAt(offset time.Duration) Rollout {
+	h.t.Helper()
+	h.now = h.rollout().StepStartedAt.Add(offset)
+	return h.tick()
+}
+
 func (h *harness) patchCount() int {
 	n := 0
 	for _, a := range h.cs.Actions() {
@@ -202,6 +276,20 @@ func (h *harness) patchCount() int {
 		}
 	}
 	return n
+}
+
+func (h *harness) runUntilStep(step int, phase Phase, maxTicks int) Rollout {
+	h.t.Helper()
+	for i := 0; i < maxTicks; i++ {
+		r := h.tick()
+		if r.CurrentStep == step && r.Phase == phase {
+			return r
+		}
+		h.markReady()
+		h.now = h.now.Add(5 * time.Second)
+	}
+	h.t.Fatalf("did not reach step %d %s within %d ticks; stuck in %s (step %d)", step, phase, maxTicks, h.rollout().Phase, h.rollout().CurrentStep)
+	return Rollout{}
 }
 
 func (h *harness) runUntil(phase Phase, maxTicks int) Rollout {

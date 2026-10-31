@@ -9,6 +9,8 @@ const (
 	subresourceScale = "scale"
 )
 
+const RolloutLabel = "rollout-id"
+
 const (
 	stableSuffix = "-stable"
 	canarySuffix = "-canary"

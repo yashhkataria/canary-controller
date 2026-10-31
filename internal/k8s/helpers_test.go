@@ -14,7 +14,10 @@ func deployment(name string, replicas int32, containers ...corev1.Container) *ap
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", Generation: 3, Labels: map[string]string{"app": "demo"}},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
-			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: containers}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "demo", "track": "canary"}},
+				Spec:       corev1.PodSpec{Containers: containers},
+			},
 		},
 		Status: appsv1.DeploymentStatus{
 			ObservedGeneration: 3,

@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -79,7 +80,7 @@ func TestSetImage(t *testing.T) {
 			cs := fake.NewClientset(deployment("demo-canary", 0, tt.containers...))
 			c := NewFromClientset(cs)
 
-			err := c.SetImage(context.Background(), "default", "demo-canary", "demo", "demo:v2")
+			err := c.SetImage(context.Background(), "default", "demo-canary", "demo", "demo:v2", map[string]string{RolloutLabel: "r1"})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -98,7 +99,27 @@ func TestSetImage(t *testing.T) {
 			if *d.Spec.Replicas != 0 || d.Labels["app"] != "demo" {
 				t.Errorf("image patch changed other fields: replicas=%d labels=%v", *d.Spec.Replicas, d.Labels)
 			}
+			if got := d.Spec.Template.Labels; got[RolloutLabel] != "r1" || got["app"] != "demo" || got["track"] != "canary" {
+				t.Errorf("pod template labels = %v, want rollout-id added and app/track kept", got)
+			}
+			st, _ := c.Status(context.Background(), "default", "demo-canary", "demo")
+			if st.RolloutLabel != "r1" {
+				t.Errorf("Status().RolloutLabel = %q, want r1", st.RolloutLabel)
+			}
 		})
+	}
+}
+
+func TestSetImageWithoutLabels(t *testing.T) {
+	cs := fake.NewClientset(deployment("demo-stable", 10))
+	c := NewFromClientset(cs)
+	if err := c.SetImage(context.Background(), "default", "demo-stable", "demo", "demo:v2", nil); err != nil {
+		t.Fatalf("SetImage: %v", err)
+	}
+	for _, a := range cs.Actions() {
+		if p, ok := a.(k8stesting.PatchAction); ok && strings.Contains(string(p.GetPatch()), "metadata") {
+			t.Errorf("patch without labels touched template metadata: %s", p.GetPatch())
+		}
 	}
 }
 

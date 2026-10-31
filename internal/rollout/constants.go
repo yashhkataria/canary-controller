@@ -21,6 +21,7 @@ const (
 	EventSucceeded   = "Succeeded"
 	EventRollingBack = "RollingBack"
 	EventRolledBack  = "RolledBack"
+	EventCheck       = "Check"
 )
 
 const (

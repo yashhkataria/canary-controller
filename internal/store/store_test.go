@@ -304,3 +304,33 @@ func TestListActiveAndStepTimes(t *testing.T) {
 		t.Errorf("step times not cleared: %v %v", a.StepStartedAt, a.WaitingSince)
 	}
 }
+
+func TestCheckResultsRoundTrip(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	r := mustCreate(t, s, newRollout("default", "demo"))
+
+	at := time.Now().UTC().Truncate(time.Millisecond)
+	r.LastCheck = &rollout.LastCheck{
+		At:      at,
+		Stable:  rollout.TrackMetrics{ErrorRate: 0.001, P99Ms: 5, Requests: 2700.5},
+		Canary:  rollout.TrackMetrics{ErrorRate: 0.21, P99Ms: 995, Requests: 280},
+		Verdict: rollout.VerdictFail,
+		Reason:  "canary error rate 21.0% >= 2.0%",
+	}
+	r.StepChecks = rollout.StepChecks{Passes: 0, Failures: 1, InconclusiveSince: &at, LastAt: &at}
+	if _, err := s.UpdateRollout(ctx, r); err != nil {
+		t.Fatalf("UpdateRollout: %v", err)
+	}
+
+	got, err := s.GetRollout(ctx, r.ID)
+	if err != nil {
+		t.Fatalf("GetRollout: %v", err)
+	}
+	if !reflect.DeepEqual(got.LastCheck, r.LastCheck) {
+		t.Errorf("lastCheck\n got  %+v\n want %+v", got.LastCheck, r.LastCheck)
+	}
+	if !reflect.DeepEqual(got.StepChecks, r.StepChecks) {
+		t.Errorf("stepChecks\n got  %+v\n want %+v", got.StepChecks, r.StepChecks)
+	}
+}

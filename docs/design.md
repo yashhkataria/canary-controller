@@ -85,7 +85,7 @@ A worker scans active rollouts every 2 s (`ENGINE_INTERVAL`), least recently upd
 | Promoting | Stable to the new image and 10 pods, then canary to 0 | Succeeded |
 | RollingBack | Stable back to `stableImage` (in case promotion had started) and 10 pods, then canary to 0 | RolledBack |
 
-Until Phase 5 the analyzer is a fixed wait: a step passes once `interval × checksPerStep` has passed since it became ready.
+Once a step is ready, the engine runs an analysis check every `interval` (see Analysis rules).
 
 **Safety nets.** If a step or a promotion is not ready within `maxWait` (for example an image that cannot be pulled), the rollout goes to RollingBack with the reason. If demo-stable or demo-canary is missing, or RBAC forbids access, the rollout ends as RolledBack before touching anything. A version conflict on a write means someone else changed the rollout first; the engine skips that tick and re-reads.
 
@@ -93,19 +93,24 @@ Until Phase 5 the analyzer is a fixed wait: a step passes once `interval × chec
 
 ## Analysis rules
 
-The demo app labels its own metrics with `track` (`stable` or `canary`), set from the `TRACK` env var. The controller runs these queries for each track over a 1-minute window:
+The demo app labels its own metrics with `track` (`stable` or `canary`), set from the `TRACK` env var. The PodMonitor also copies two pod labels onto every series (`podTargetLabels`): `app`, and `rollout-id` (as `rollout_id`).
+
+**Which pods count.** `track` names a Deployment, not a version: right after one rollout ends, the previous canary's last minute of data is still in the window. So when the engine sets demo-canary's image it also sets the pod-template label `rollout-id=<rollout id>` in the same patch, and canary queries filter on it. Only this rollout's canary pods are judged; stable queries filter on `track="stable"` only. Every query is also scoped to the rollout's `namespace` and `app`.
+
+The controller runs these queries for each track over a 1-minute window (shown for the canary; one query returns both tracks via `sum by (track)` and `or`):
 
 ```promql
-# error rate
-sum(rate(http_requests_total{track="canary",code=~"5.."}[1m]))
-  / sum(rate(http_requests_total{track="canary"}[1m]))
+# error rate (a track with no 5xx counts as 0, not as missing data)
+(sum by (track) (rate(http_requests_total{namespace="default",app="demo",track="canary",rollout_id="<id>",code=~"5.."}[1m]))
+  or (0 * sum by (track) (rate(http_requests_total{…same selector…}[1m]))))
+  / sum by (track) (rate(http_requests_total{…same selector…}[1m]))
 
 # p99 latency (seconds)
 histogram_quantile(0.99,
-  sum by (le) (rate(http_request_duration_seconds_bucket{track="canary"}[1m])))
+  sum by (track, le) (rate(http_request_duration_seconds_bucket{…same selector…}[1m])))
 
 # request count in the window
-sum(increase(http_requests_total{track="canary"}[1m]))
+sum by (track) (increase(http_requests_total{…same selector…}[1m]))
 ```
 
 Each check returns pass, fail or inconclusive. `decide(settings, stable, canary)` is a pure function applying these rules in order:
@@ -117,6 +122,18 @@ Each check returns pass, fail or inconclusive. `decide(settings, stable, canary)
 5. Otherwise → **pass**.
 
 A step passes after `checksPerStep` passing checks in a row. `failureLimit` failures trigger a rollback. Inconclusive for longer than `maxWait` also rolls back, with the reason recorded.
+
+How the engine applies these, per step:
+
+- The first check runs one `interval` after the step is ready, then one every `interval`. Checks pause while pods are being put back to the step's counts.
+- **Passes must be in a row:** a fail or an inconclusive resets the streak. **Failures are counted per step**, not in a row. All counters reset when a step starts.
+- The inconclusive timer starts at the first inconclusive and clears on any pass or fail.
+- If Prometheus can't be reached or a query fails, the check is **inconclusive** with the error as its reason, so a long outage rolls back via `maxWait` rather than promoting blind.
+- No separate wait for the window: the check that completes a streak comes at least `interval × checksPerStep` (60 s) after the step was ready, so it always looks at a full minute of the step's own traffic, while a failure can roll back at the first check.
+- Missing data is never NaN: a track with no traffic (stable at the 100% step) reports 0 requests, 0% errors and p99 0, which leaves only the absolute thresholds in play.
+- Comparisons allow 1e-9 for floating-point rounding, so a value exactly at a threshold counts as reaching it.
+
+Each check is stored as `lastCheck` together with the step's counters (`stepChecks`) in one version-guarded write, and as a `Check` event whose metrics hold both tracks' numbers. A phase change caused by the check goes in the same write with its own event.
 
 | Setting | Starting value | Why |
 | --- | --- | --- |
@@ -156,7 +173,8 @@ Nothing else: no `list`, `create`, `update` or `delete`, no pods or Secrets, no 
 | `currentStep` | int | Index into `steps` |
 | `phase` | string | One of the lifecycle phases above |
 | `analysis` | object | The settings above |
-| `lastCheck` | object | Time, both tracks' error rate and p99, verdict |
+| `lastCheck` | object | Time, both tracks' error rate, p99 and request count, verdict, reason |
+| `stepChecks` | object | This step's `passes` (in a row), `failures`, `inconclusiveSince`, `lastAt` |
 | `active` | bool | True until Succeeded or RolledBack |
 | `owner` | string | Replica holding the lock |
 | `version` | int | Optimistic concurrency / fencing token |

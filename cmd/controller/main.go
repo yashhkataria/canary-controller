@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yashhkataria/canary-controller/internal/analysis"
 	"github.com/yashhkataria/canary-controller/internal/api"
 	"github.com/yashhkataria/canary-controller/internal/k8s"
 	"github.com/yashhkataria/canary-controller/internal/rollout"
@@ -58,7 +59,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	engine := rollout.NewEngine(st, kc, rollout.FixedWait{}, rollout.EngineOptions{
+	prom, err := analysis.New(cfg.PrometheusURL)
+	if err != nil {
+		return err
+	}
+	engine := rollout.NewEngine(st, kc, prom, rollout.EngineOptions{
 		Owner:    cfg.Owner,
 		Interval: cfg.EngineInterval,
 		Logger:   logger,

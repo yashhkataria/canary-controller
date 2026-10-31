@@ -10,6 +10,7 @@ type DeploymentStatus struct {
 	Name               string
 	Container          string
 	Image              string
+	RolloutLabel       string
 	Desired            int32
 	Replicas           int32
 	Ready              int32

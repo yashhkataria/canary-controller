@@ -28,6 +28,7 @@ func (c *Client) Status(ctx context.Context, namespace, name, container string) 
 		Name:               d.Name,
 		Container:          ctr.Name,
 		Image:              ctr.Image,
+		RolloutLabel:       d.Spec.Template.Labels[RolloutLabel],
 		Desired:            desired,
 		Replicas:           d.Status.Replicas,
 		Ready:              d.Status.ReadyReplicas,
@@ -54,7 +55,7 @@ func (c *Client) SetReplicas(ctx context.Context, namespace, name string, replic
 	return nil
 }
 
-func (c *Client) SetImage(ctx context.Context, namespace, name, container, image string) error {
+func (c *Client) SetImage(ctx context.Context, namespace, name, container, image string, labels map[string]string) error {
 	d, err := c.get(ctx, namespace, name)
 	if err != nil {
 		return err
@@ -66,11 +67,13 @@ func (c *Client) SetImage(ctx context.Context, namespace, name, container, image
 
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	patch, err := json.Marshal(map[string]any{
-		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
-			"containers": []map[string]string{{"name": ctr.Name, "image": image}},
-		}}},
-	})
+	template := map[string]any{"spec": map[string]any{
+		"containers": []map[string]string{{"name": ctr.Name, "image": image}},
+	}}
+	if len(labels) > 0 {
+		template["metadata"] = map[string]any{"labels": labels}
+	}
+	patch, err := json.Marshal(map[string]any{"spec": map[string]any{"template": template}})
 	if err != nil {
 		return err
 	}

@@ -6,7 +6,7 @@ import (
 	"github.com/yashhkataria/canary-controller/internal/logging"
 )
 
-func (e *Engine) save(ctx context.Context, r Rollout, mutate func(*Rollout), eventType, message string) error {
+func (e *Engine) save(ctx context.Context, r Rollout, mutate func(*Rollout), eventType, message string, before ...Event) error {
 	from := r.Phase
 	mutate(&r)
 	updated, err := e.store.UpdateRollout(ctx, r)
@@ -17,32 +17,39 @@ func (e *Engine) save(ctx context.Context, r Rollout, mutate func(*Rollout), eve
 	if from != updated.Phase {
 		log.Info("phase changed", "from", string(from), "to", string(updated.Phase), "step", updated.CurrentStep, "version", updated.Version)
 	}
-	if eventType == "" {
-		return nil
+	events := before
+	if eventType != "" {
+		events = append(events, Event{Type: eventType, Message: message})
 	}
-	if _, err := e.store.AppendEvent(ctx, Event{RolloutID: updated.ID, At: e.now(), Type: eventType, Message: message}); err != nil {
-		log.Warn("write event", "type", eventType, "err", err)
+	for _, ev := range events {
+		ev.RolloutID = updated.ID
+		if ev.At.IsZero() {
+			ev.At = e.now()
+		}
+		if _, err := e.store.AppendEvent(ctx, ev); err != nil {
+			log.Warn("write event", "type", ev.Type, "err", err)
+		}
 	}
 	return nil
 }
 
-func (e *Engine) beginRollback(ctx context.Context, r Rollout, reason string) error {
+func (e *Engine) beginRollback(ctx context.Context, r Rollout, reason string, before ...Event) error {
 	now := e.now()
 	return e.save(ctx, r, func(x *Rollout) {
 		x.Phase = PhaseRollingBack
 		x.Reason = reason
 		x.StepStartedAt = nil
 		x.WaitingSince = &now
-	}, EventRollingBack, reason)
+	}, EventRollingBack, reason, before...)
 }
 
-func (e *Engine) beginPromotion(ctx context.Context, r Rollout, message string) error {
+func (e *Engine) beginPromotion(ctx context.Context, r Rollout, message string, before ...Event) error {
 	now := e.now()
 	return e.save(ctx, r, func(x *Rollout) {
 		x.Phase = PhasePromoting
 		x.StepStartedAt = nil
 		x.WaitingSince = &now
-	}, EventPromoting, message)
+	}, EventPromoting, message, before...)
 }
 
 func (e *Engine) finish(ctx context.Context, r Rollout, phase Phase, reason, eventType, message string) error {

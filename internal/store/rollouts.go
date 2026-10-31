@@ -99,6 +99,7 @@ func (s *Store) UpdateRollout(ctx context.Context, r rollout.Rollout) (rollout.R
 			{Key: "currentStep", Value: r.CurrentStep},
 			{Key: "phase", Value: r.Phase},
 			{Key: "lastCheck", Value: r.LastCheck},
+			{Key: "stepChecks", Value: r.StepChecks},
 			{Key: "active", Value: r.Active},
 			{Key: "owner", Value: r.Owner},
 			{Key: "reason", Value: r.Reason},

@@ -62,42 +62,9 @@ func (e *Engine) progress(ctx context.Context, r Rollout) error {
 		x.Phase = PhaseAnalyzing
 		x.StepStartedAt = &now
 		x.WaitingSince = nil
+		x.StepChecks = StepChecks{}
 	}, EventStepReady, fmt.Sprintf("step %d of %d ready: %d%% canary (%d canary, %d stable pods)",
 		r.CurrentStep+1, len(r.Steps), r.Steps[r.CurrentStep], want.canary, want.stable))
-}
-
-func (e *Engine) analyze(ctx context.Context, r Rollout) error {
-	if r.CurrentStep >= len(r.Steps) {
-		return e.beginPromotion(ctx, r, "no steps left")
-	}
-	done, err := e.converge(ctx, r, e.stepTarget(r))
-	if err != nil || !done {
-		return err
-	}
-
-	verdict, detail, err := e.analyzer.Analyze(ctx, r, e.now())
-	if err != nil {
-		return fmt.Errorf("analyze: %w", err)
-	}
-	switch verdict {
-	case VerdictPass:
-		if r.CurrentStep == len(r.Steps)-1 {
-			return e.beginPromotion(ctx, r, fmt.Sprintf("all %d steps passed (%s)", len(r.Steps), detail))
-		}
-		now := e.now()
-		next := r.CurrentStep + 1
-		return e.save(ctx, r, func(x *Rollout) {
-			x.CurrentStep = next
-			x.Phase = PhaseProgressing
-			x.StepStartedAt = nil
-			x.WaitingSince = &now
-		}, EventStepPassed, fmt.Sprintf("step %d (%d%%) passed: %s; moving to %d%%",
-			r.CurrentStep+1, r.Steps[r.CurrentStep], detail, r.Steps[next]))
-	case VerdictFail:
-		return e.beginRollback(ctx, r, detail)
-	default:
-		return nil
-	}
 }
 
 func (e *Engine) promote(ctx context.Context, r Rollout) error {
@@ -133,10 +100,11 @@ func (e *Engine) converge(ctx context.Context, r Rollout, want desiredState) (bo
 	ns, stableName, canaryName := r.Namespace, k8s.StableName(r.App), k8s.CanaryName(r.App)
 
 	switch {
-	case want.canaryImage != "" && canary.Image != want.canaryImage:
-		return false, e.cluster.SetImage(ctx, ns, canaryName, canary.Container, want.canaryImage)
+	case want.canaryImage != "" && (canary.Image != want.canaryImage || canary.RolloutLabel != want.rolloutID):
+		return false, e.cluster.SetImage(ctx, ns, canaryName, canary.Container, want.canaryImage,
+			map[string]string{k8s.RolloutLabel: want.rolloutID})
 	case want.stableImage != "" && stable.Image != want.stableImage:
-		return false, e.cluster.SetImage(ctx, ns, stableName, stable.Container, want.stableImage)
+		return false, e.cluster.SetImage(ctx, ns, stableName, stable.Container, want.stableImage, nil)
 	case canary.Desired < want.canary:
 		return false, e.cluster.SetReplicas(ctx, ns, canaryName, want.canary)
 	case stable.Desired < want.stable:
@@ -166,7 +134,7 @@ func (e *Engine) statuses(ctx context.Context, r Rollout) (stable, canary k8s.De
 
 func (e *Engine) stepTarget(r Rollout) desiredState {
 	canary, stable := Replicas(r.Steps[r.CurrentStep])
-	return desiredState{canaryImage: r.CanaryImage, canary: canary, stable: stable}
+	return desiredState{canaryImage: r.CanaryImage, rolloutID: r.ID.Hex(), canary: canary, stable: stable}
 }
 
 func (e *Engine) timedOut(r Rollout) bool {

@@ -59,4 +59,8 @@ Phase 4 done: internal/k8s (client-go, scale-subresource patches, image
 patches, readiness check), rollout engine in internal/rollout (2 s
 level-triggered reconcile, capacity-safe ordering, fixed-wait analysis,
 maxWait safety net), abort/promote endpoints, least-privilege RBAC.
-Next: Phase 5, automated analysis and rollback.
+Phase 5 done: internal/analysis (Prometheus queries scoped by namespace,
+app and the canary's rollout-id label; pure decide() with the five rules),
+engine checks every interval with pass streaks, per-step failures and
+maxWait for inconclusive; lastCheck, stepChecks and Check events.
+Next: Phase 6, high availability with Redis locks.

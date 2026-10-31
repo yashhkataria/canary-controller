@@ -2,7 +2,7 @@
 
 A canary deployment controller for Kubernetes, written in Go. It shifts traffic to a new version in stages, checks Prometheus error rate and p99 latency after each stage, and promotes or rolls back automatically.
 
-> **Status:** work in progress. Phases 0–4 (project setup, demo app, local cluster, controller API and store, rollout engine) are done; see the roadmap below.
+> **Status:** work in progress. Phases 0–5 (project setup, demo app, local cluster, controller API and store, rollout engine, automated analysis and rollback) are done; see the roadmap below.
 
 ## How it works
 
@@ -23,7 +23,7 @@ Go · Kubernetes (client-go) · Docker · MongoDB · Redis · Prometheus · Graf
 - [x] Phase 2: local cluster with Prometheus and steady load
 - [x] Phase 3: controller API and MongoDB store
 - [x] Phase 4: rollout engine
-- [ ] Phase 5: automated analysis and rollback
+- [x] Phase 5: automated analysis and rollback
 - [ ] Phase 6: high availability with Redis locks
 - [ ] Phase 7: observability
 - [ ] Phase 8: load tests and measured results
@@ -69,7 +69,9 @@ curl -s 'localhost:8081/v1/rollouts?app=demo'
 curl -s localhost:8081/v1/rollouts/<id>/events
 ```
 
-The engine picks the rollout up within 2 s and moves pods step by step (1/9, 5/5, 10/0), then promotes: demo-stable runs the new image on 10 pods and demo-canary goes back to 0. Until Phase 5 each step passes after a fixed wait of `interval × checksPerStep` (60 s by default; send `"analysis":{"interval":"5s","checksPerStep":2}` to try it quickly).
+The engine picks the rollout up within 2 s and moves pods step by step (1/9, 5/5, 10/0). At each step it checks Prometheus every 20 s: error rate, p99 latency and request count for the canary against stable. Three passes in a row move to the next step; one failure rolls back; too little or unclear evidence for 5 minutes also rolls back. After the last step it promotes: demo-stable runs the new image on 10 pods and demo-canary goes back to 0.
+
+Try it under load (`make load`): `demo:v2` is promoted in about 4 minutes; `demo:v2-bad` is rolled back at 10% on its error rate and `demo:v2-slow` on its p99, each about 30 s after it starts. Every verdict is in `GET /v1/rollouts/<id>` (`lastCheck`) and in the rollout's events (`Check`).
 
 ```bash
 curl -s -X POST localhost:8081/v1/rollouts/<id>/abort
@@ -79,7 +81,7 @@ curl -s -X POST localhost:8081/v1/rollouts/<id>/abort
 curl -s -X POST localhost:8081/v1/rollouts/<id>/promote
 ```
 
-Abort rolls back (stable to 10 first, then canary to 0); promote skips the remaining steps. Both return 202, or 409 when the rollout's phase doesn't allow it. Watch it happen with `kubectl get deploy demo-stable demo-canary -w`.
+Abort rolls back (stable to 10 first, then canary to 0); promote skips the remaining steps. Both return 202, or 409 when the rollout's phase doesn't allow it. Watch it happen with `kubectl get deploy -l app=demo -w`.
 
 ## Configuration
 
@@ -90,7 +92,7 @@ Abort rolls back (stable to 10 first, then canary to 0); promote skips the remai
 | `PORT` | HTTP port | `8080` |
 | `MONGO_URI` | MongoDB connection string | `mongodb://mongodb.canary-system:27017` |
 | `MONGO_DATABASE` | Database for `rollouts` and `events` | `canary` |
-| `PROMETHEUS_URL` | Prometheus base URL (used from Phase 5) | `http://monitoring-kube-prometheus-prometheus.monitoring:9090` |
+| `PROMETHEUS_URL` | Prometheus base URL for analysis queries | `http://monitoring-kube-prometheus-prometheus.monitoring:9090` |
 | `REDIS_ADDR` | Redis `host:port` (used from Phase 6) | `redis.canary-system:6379` |
 | `ENGINE_INTERVAL` | How often the engine scans active rollouts (500ms to 1m) | `2s` |
 | `KUBECONFIG` | Kubeconfig to use when not running in a cluster | in-cluster config, then `~/.kube/config` |

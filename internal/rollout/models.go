@@ -36,7 +36,15 @@ type LastCheck struct {
 	At      time.Time    `json:"at" bson:"at"`
 	Stable  TrackMetrics `json:"stable" bson:"stable"`
 	Canary  TrackMetrics `json:"canary" bson:"canary"`
-	Verdict string       `json:"verdict" bson:"verdict"`
+	Verdict Verdict      `json:"verdict" bson:"verdict"`
+	Reason  string       `json:"reason" bson:"reason"`
+}
+
+type StepChecks struct {
+	Passes            int        `json:"passes" bson:"passes"`
+	Failures          int        `json:"failures" bson:"failures"`
+	InconclusiveSince *time.Time `json:"inconclusiveSince,omitempty" bson:"inconclusiveSince,omitempty"`
+	LastAt            *time.Time `json:"lastAt,omitempty" bson:"lastAt,omitempty"`
 }
 
 type Rollout struct {
@@ -50,6 +58,7 @@ type Rollout struct {
 	Phase         Phase         `json:"phase" bson:"phase"`
 	Analysis      Analysis      `json:"analysis" bson:"analysis"`
 	LastCheck     *LastCheck    `json:"lastCheck,omitempty" bson:"lastCheck,omitempty"`
+	StepChecks    StepChecks    `json:"stepChecks" bson:"stepChecks"`
 	Active        bool          `json:"active" bson:"active"`
 	Owner         string        `json:"owner,omitempty" bson:"owner,omitempty"`
 	Version       int64         `json:"version" bson:"version"`
@@ -81,11 +90,11 @@ type Store interface {
 type Cluster interface {
 	Status(ctx context.Context, namespace, name, container string) (k8s.DeploymentStatus, error)
 	SetReplicas(ctx context.Context, namespace, name string, replicas int32) error
-	SetImage(ctx context.Context, namespace, name, container, image string) error
+	SetImage(ctx context.Context, namespace, name, container, image string, labels map[string]string) error
 }
 
 type Analyzer interface {
-	Analyze(ctx context.Context, r Rollout, now time.Time) (Verdict, string, error)
+	Check(ctx context.Context, r Rollout, now time.Time) (LastCheck, error)
 }
 
 type Engine struct {
@@ -105,11 +114,10 @@ type EngineOptions struct {
 	Now      func() time.Time
 }
 
-type FixedWait struct{}
-
 type desiredState struct {
 	stableImage string
 	canaryImage string
+	rolloutID   string
 	stable      int32
 	canary      int32
 }

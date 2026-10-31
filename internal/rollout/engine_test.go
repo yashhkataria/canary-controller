@@ -9,6 +9,8 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+
+	"github.com/yashhkataria/canary-controller/internal/k8s"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -29,33 +31,6 @@ func TestReplicas(t *testing.T) {
 		if c+s != TotalReplicas {
 			t.Errorf("Replicas(%d) total = %d, want %d", tt.weight, c+s, TotalReplicas)
 		}
-	}
-}
-
-func TestFixedWait(t *testing.T) {
-	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	a := DefaultAnalysis()
-	a.Interval = Duration(10 * time.Second)
-	a.ChecksPerStep = 3
-	tests := []struct {
-		name    string
-		started *time.Time
-		after   time.Duration
-		want    Verdict
-	}{
-		{name: "no start time", started: nil, want: VerdictInconclusive},
-		{name: "just started", started: &start, after: 0, want: VerdictInconclusive},
-		{name: "almost there", started: &start, after: 29 * time.Second, want: VerdictInconclusive},
-		{name: "exactly interval x checks", started: &start, after: 30 * time.Second, want: VerdictPass},
-		{name: "well past", started: &start, after: time.Hour, want: VerdictPass},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, _, _ := FixedWait{}.Analyze(context.Background(), Rollout{Analysis: a, StepStartedAt: tt.started}, start.Add(tt.after))
-			if got != tt.want {
-				t.Errorf("verdict = %s, want %s", got, tt.want)
-			}
-		})
 	}
 }
 
@@ -84,6 +59,9 @@ func TestStepGrowsCanaryBeforeShrinkingStable(t *testing.T) {
 	h.tick()
 	if _, img := h.deployment("demo-canary"); img != "demo:v2" {
 		t.Fatalf("first action should set the canary image, canary image = %s", img)
+	}
+	if got := h.rawDeployment("demo-canary").Spec.Template.Labels[k8s.RolloutLabel]; got != h.id.Hex() {
+		t.Fatalf("canary pods labelled rollout-id=%q, want %s", got, h.id.Hex())
 	}
 
 	h.tick()
@@ -116,25 +94,6 @@ func TestStepGrowsCanaryBeforeShrinkingStable(t *testing.T) {
 	}
 }
 
-func TestAnalyzingWaitsThenAdvances(t *testing.T) {
-	h := newHarness(t, []int{10, 50, 100})
-	r := h.runUntil(PhaseAnalyzing, 20)
-
-	h.now = r.StepStartedAt.Add(19 * time.Second)
-	if r := h.tick(); r.Phase != PhaseAnalyzing {
-		t.Fatalf("advanced before the 20 s wait: %s", r.Phase)
-	}
-
-	h.now = r.StepStartedAt.Add(20 * time.Second)
-	r = h.tick()
-	if r.Phase != PhaseProgressing || r.CurrentStep != 1 || r.StepStartedAt != nil || r.WaitingSince == nil {
-		t.Fatalf("after the wait: phase=%s step=%d", r.Phase, r.CurrentStep)
-	}
-	if last := h.store.eventTypes(); last[len(last)-1] != EventStepPassed {
-		t.Errorf("last event = %s, want StepPassed", last[len(last)-1])
-	}
-}
-
 func TestFullRolloutSucceeds(t *testing.T) {
 	h := newHarness(t, []int{10, 50, 100})
 	r := h.runUntil(PhaseSucceeded, 80)
@@ -149,8 +108,30 @@ func TestFullRolloutSucceeds(t *testing.T) {
 		t.Errorf("canary = %d pods, want 0", n)
 	}
 	want := []string{EventStarted, EventStepReady, EventStepPassed, EventStepReady, EventStepPassed, EventStepReady, EventPromoting, EventSucceeded}
-	if got := h.store.eventTypes(); !slices.Equal(got, want) {
-		t.Errorf("events\n got  %v\n want %v", got, want)
+	if got := h.store.phaseEventTypes(); !slices.Equal(got, want) {
+		t.Errorf("phase events\n got  %v\n want %v", got, want)
+	}
+	if n := len(h.store.eventsOf(EventCheck)); n != 6 {
+		t.Errorf("check events = %d, want 6 (2 per step x 3 steps)", n)
+	}
+}
+
+func TestCanaryRelabelledForEachRollout(t *testing.T) {
+	h := newHarness(t, []int{10})
+	d := h.rawDeployment("demo-canary").DeepCopy()
+	d.Spec.Template.Spec.Containers[0].Image = "demo:v2"
+	d.Spec.Template.Labels = map[string]string{k8s.RolloutLabel: "an-older-rollout"}
+	if err := h.cs.Tracker().Update(deploymentsGVR, d, "default"); err != nil {
+		t.Fatalf("seed canary: %v", err)
+	}
+	h.tick()
+	before := h.patchCount()
+	h.tick()
+	if h.patchCount() != before+1 {
+		t.Fatalf("same image but another rollout's label: want one relabel patch, got %d", h.patchCount()-before)
+	}
+	if got := h.rawDeployment("demo-canary").Spec.Template.Labels[k8s.RolloutLabel]; got != h.id.Hex() {
+		t.Errorf("rollout-id = %q, want %s", got, h.id.Hex())
 	}
 }
 
@@ -197,9 +178,7 @@ func TestReconcileTwiceIsHarmless(t *testing.T) {
 
 func TestAbortMidStepRestoresCapacityFirst(t *testing.T) {
 	h := newHarness(t, []int{10, 50, 100})
-	h.runUntil(PhaseAnalyzing, 20)
-	h.now = h.rollout().StepStartedAt.Add(time.Minute)
-	h.runUntil(PhaseAnalyzing, 20)
+	h.runUntilStep(1, PhaseAnalyzing, 40)
 	if c, _ := h.deployment("demo-canary"); c != 5 {
 		t.Fatalf("setup: canary = %d, want 5", c)
 	}

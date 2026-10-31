@@ -8,6 +8,9 @@ spec:
   selector:
     matchLabels:
       app: demo
+  podTargetLabels:
+    - app
+    - rollout-id
   podMetricsEndpoints:
     - port: http
       path: /metrics
